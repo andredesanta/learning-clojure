@@ -309,6 +309,167 @@
 		  (println "Here's how I feel about that thing you did: " message))
 		; => Here's how I feel about that thing you did: Oh, big deal!
 
+;; - If you want to introduce let bindings in your macro, you can use a gensym.
+
+;; - The gensym function produces unique symbols on each successive call:
+
+		(gensym)
+		; => G__655
+
+		(gensym)
+		; => G__658
+
+;; - You can also pass a symbol prefix:
+
+		(gensym 'message)
+		; => message4760
+
+		(gensym 'message)
+		; => message4763
+
+;; - Here’s how you could rewrite with-mischief to be less mischievous:
+
+		(defmacro without-mischief
+		  [& stuff-to-do]
+		  (let [macro-message (gensym 'message)]
+		    `(let [~macro-message "Oh, big deal!"]
+		       ~@stuff-to-do
+		       (println "I still need to say: " ~macro-message))))
+
+		(without-mischief
+		  (println "Here's how I feel about that thing you did: " message))
+		; => Here's how I feel about that thing you did:  Good job!
+		; => I still need to say:  Oh, big deal!
+
+;; - This example avoids variable capture by using gensym to create a new, unique symbol that then gets bound to macro-message.
+
+;; - Within the syntax-quoted let expression, macro-message is unquoted, resolving to the gensym’d symbol.
+
+;; - Auto-gensyms are more concise and convenient ways to use gensyms:
+
+		`(blarg# blarg#)
+		(blarg__2869__auto__ blarg__2869__auto__)
+
+		`(let [name# "Larry Potter"] name#)
+		; => (clojure.core/let [name__2872__auto__ "Larry Potter"] name__2872__auto__)
+
+;; - You create an auto-gensym by appending a hash mark (or hashtag, if you must insist) to a symbol within a syntax-quoted list.
+
+;; - Clojure automatically ensures that each instance of x# resolves to the same symbol within the same syntax-quoted list.
+
+;; ------------------------------------------------------------------------------------------------------------------------------------
+
+;; Double Evaluation
+
+;; - Occurs when a form passed to a macro as an argument gets evaluated more than once:
+
+		(defmacro report
+		  [to-try]
+		  `(if ~to-try
+		     (println (quote ~to-try) "was successful:" ~to-try)
+		     (println (quote ~to-try) "was not successful:" ~to-try)))
+		     
+		;; Thread/sleep takes a number of milliseconds to sleep for
+		(report (do (Thread/sleep 1000) (+ 1 1)))
+
+;; - In this case, you would actually sleep for two seconds because (Thread/sleep 1000) gets evaluated twice: once right after if
+;; and again when println gets called.
+
+;; -  Here’s how you could avoid this problem:
+
+		(defmacro report
+		  [to-try]
+		  `(let [result# ~to-try]
+		     (if result#
+		       (println (quote ~to-try) "was successful:" result#)
+		       (println (quote ~to-try) "was not successful:" result#))))
+
+;; - By placing to-try in a let expression, you only evaluate that code once and bind the result to an auto-gensym’d symbol, result#,
+;; which you can now reference without reevaluating the to-try code.
+
+;; ------------------------------------------------------------------------------------------------------------------------------------
+
+;; Macros All teh Way Down
+
+;; - You can end up having to write more and more macros to get anything done. This is a consequence of the fact that macro expansion
+;; happens before evaluation.
+
+
+;; - Let’s say you wanted to doseq using the report macro. Instead of multiple calls to report:
+
+		(report (= 1 1))
+		; => (= 1 1) was successful: true
+
+		(report (= 1 2))
+		; => (= 1 2) was not successful: false
+
+;; Let’s iterate:
+
+		(doseq [code ['(= 1 1) '(= 1 2)]]
+		  (report code))
+		; => code was successful: (= 1 1)
+		; => code was successful: (= 1 2)
+
+;; - report receives the unevaluated symbol code in each iteration; however, we want it to receive whatever code is bound to at
+;; evaluation time.
+
+;; - To resolve this situation, we might write another macro, like this:
+
+		(defmacro doseq-macro
+		  [macroname & args]
+		  `(do
+		     ~@(map (fn [arg] (list macroname arg)) args)))
+
+		(doseq-macro report (= 1 1) (= 1 2))
+		; => (= 1 1) was successful: true
+		; => (= 1 2) was not successful: false
+
+;; ------------------------------------------------------------------------------------------------------------------------------------
+
+;; Brews for the Brave and True
+
+		(def order-details
+		  {:name "Mitchard Blimmons"
+		   :email "mitchard.blimmonsgmail.com"})
+
+		(def order-details-validations
+		  {:name
+		   ["Please enter a name" not-empty]
+
+		   :email
+		   ["Please enter an email address" not-empty
+
+		    "Your email address doesn't look like an email address"
+		    #(or (empty? %) (re-seq #"@" %))]})
+
+		(defn error-messages-for
+		  "Return a seq of error messages"
+		  [to-validate message-validator-pairs]
+		  (map first (filter #(not ((second %) to-validate))
+		                     (partition 2 message-validator-pairs))))
+
+		(defn validate
+		  "Returns a map with a vector of errors for each key"
+		  [to-validate validations]
+		  (reduce (fn [errors validation] ; errors is an empty map in the beginning, and validation is equal to validations
+		            (let [[fieldname validation-check-groups] validation
+		                  value (get to-validate fieldname)
+		                  error-messages (error-messages-for value validation-check-groups)]
+		              (if (empty? error-messages)
+		                errors
+		                (assoc errors fieldname error-messages))))
+		          {}
+		          validations))
+
+		(defmacro if-valid
+		  "Handle validation more concisely"
+		  [to-validate validations errors-name & then-else]
+		  `(let [~errors-name (validate ~to-validate ~validations)]
+		     (if (empty? ~errors-name)
+		       ~@then-else)))
+
+
+
 
 
 
